@@ -109,7 +109,7 @@ func (dpm *Manager) handleNewPlugins(currentPluginsMap map[string]devicePlugin, 
 				// add new plugin only if it doesn't already exist
 				glog.V(3).Infof("Adding a new plugin \"%s\"", name)
 				plugin := newDevicePlugin(dpm.lister.GetResourceNamespace(), name, dpm.lister.NewPlugin(name))
-				startPlugin(name, plugin)
+				startPlugin(name, &plugin)
 				pluginMapMutex.Lock()
 				currentPluginsMap[name] = plugin
 				pluginMapMutex.Unlock()
@@ -125,7 +125,7 @@ func (dpm *Manager) handleNewPlugins(currentPluginsMap map[string]devicePlugin, 
 		go func(name string, plugin devicePlugin) {
 			if _, found := newPluginsSet[name]; !found {
 				glog.V(3).Infof("Remove unused plugin \"%s\"", name)
-				stopPlugin(name, plugin)
+				stopPlugin(name, &plugin)
 				pluginMapMutex.Lock()
 				delete(currentPluginsMap, name)
 				pluginMapMutex.Unlock()
@@ -138,11 +138,15 @@ func (dpm *Manager) handleNewPlugins(currentPluginsMap map[string]devicePlugin, 
 
 func (dpm *Manager) startPluginServers(pluginMap map[string]devicePlugin) {
 	var wg sync.WaitGroup
+	var pluginMapMutex = &sync.Mutex{}
 
 	for pluginLastName, currentPlugin := range pluginMap {
 		wg.Add(1)
 		go func(name string, plugin devicePlugin) {
-			startPluginServer(name, plugin)
+			startPluginServer(name, &plugin)
+			pluginMapMutex.Lock()
+			pluginMap[name] = plugin
+			pluginMapMutex.Unlock()
 			wg.Done()
 		}(pluginLastName, currentPlugin)
 	}
@@ -151,11 +155,15 @@ func (dpm *Manager) startPluginServers(pluginMap map[string]devicePlugin) {
 
 func (dpm *Manager) stopPluginServers(pluginMap map[string]devicePlugin) {
 	var wg sync.WaitGroup
+	var pluginMapMutex = &sync.Mutex{}
 
 	for pluginLastName, currentPlugin := range pluginMap {
 		wg.Add(1)
 		go func(name string, plugin devicePlugin) {
-			stopPluginServer(name, plugin)
+			stopPluginServer(name, &plugin)
+			pluginMapMutex.Lock()
+			pluginMap[name] = plugin
+			pluginMapMutex.Unlock()
 			wg.Done()
 		}(pluginLastName, currentPlugin)
 	}
@@ -169,7 +177,7 @@ func (dpm *Manager) stopPlugins(pluginMap map[string]devicePlugin) {
 	for pluginLastName, currentPlugin := range pluginMap {
 		wg.Add(1)
 		go func(name string, plugin devicePlugin) {
-			stopPlugin(name, plugin)
+			stopPlugin(name, &plugin)
 			pluginMapMutex.Lock()
 			delete(pluginMap, name)
 			pluginMapMutex.Unlock()
@@ -179,7 +187,7 @@ func (dpm *Manager) stopPlugins(pluginMap map[string]devicePlugin) {
 	wg.Wait()
 }
 
-func startPlugin(pluginLastName string, plugin devicePlugin) {
+func startPlugin(pluginLastName string, plugin *devicePlugin) {
 	var err error
 	if devicePluginImpl, ok := plugin.DevicePluginImpl.(PluginInterfaceStart); ok {
 		err = devicePluginImpl.Start()
@@ -192,7 +200,7 @@ func startPlugin(pluginLastName string, plugin devicePlugin) {
 	}
 }
 
-func stopPlugin(pluginLastName string, plugin devicePlugin) {
+func stopPlugin(pluginLastName string, plugin *devicePlugin) {
 	stopPluginServer(pluginLastName, plugin)
 	if devicePluginImpl, ok := plugin.DevicePluginImpl.(PluginInterfaceStop); ok {
 		err := devicePluginImpl.Stop()
@@ -202,7 +210,7 @@ func stopPlugin(pluginLastName string, plugin devicePlugin) {
 	}
 }
 
-func startPluginServer(pluginLastName string, plugin devicePlugin) {
+func startPluginServer(pluginLastName string, plugin *devicePlugin) {
 	for i := 1; i <= startPluginServerRetries; i++ {
 		err := plugin.StartServer()
 		if err == nil {
@@ -218,7 +226,7 @@ func startPluginServer(pluginLastName string, plugin devicePlugin) {
 	}
 }
 
-func stopPluginServer(pluginLastName string, plugin devicePlugin) {
+func stopPluginServer(pluginLastName string, plugin *devicePlugin) {
 	err := plugin.StopServer()
 	if err != nil {
 		glog.Errorf("Failed to stop plugin's \"%s\" server: %s", pluginLastName, err)
